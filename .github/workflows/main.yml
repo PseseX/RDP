@@ -19,13 +19,13 @@ jobs:
         shell: pwsh
         run: |
           choco feature enable -n=allowGlobalConfirmation
-          choco install anydesk
+          choco install anydesk --ignore-checksums
           # تأكد من مسار AnyDesk
           $adExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
           if (!(Test-Path $adExe)) { $adExe = "C:\Program Files\AnyDesk\AnyDesk.exe" }
           if (!(Test-Path $adExe)) { throw "AnyDesk.exe not found after install." }
 
-          # حط الباسورد
+          # ضبط الباسورد للوصول بدون Accept
           & $adExe --set-password "${{ secrets.ANYDESK_PASSWORD }}"
           Start-Sleep -Seconds 3
 
@@ -94,4 +94,3 @@ jobs:
       - name: Keep alive for 6h
         shell: pwsh
         run: Start-Sleep -Seconds 21600
-
