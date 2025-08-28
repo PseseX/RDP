@@ -20,10 +20,12 @@ jobs:
         run: |
           choco feature enable -n=allowGlobalConfirmation
           choco install anydesk --ignore-checksums
-          # تأكد من مسار AnyDesk
-          $adExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
-          if (!(Test-Path $adExe)) { $adExe = "C:\Program Files\AnyDesk\AnyDesk.exe" }
-          if (!(Test-Path $adExe)) { throw "AnyDesk.exe not found after install." }
+          
+          # البحث عن AnyDesk.exe
+          $exe = Get-ChildItem "C:\ProgramData\chocolatey\lib\" -Recurse -Filter "AnyDesk.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "AnyDesk.exe not found after install." }
+          $adExe = $exe.FullName
+          Write-Host "Found AnyDesk at $adExe"
 
           # ضبط الباسورد للوصول بدون Accept
           & $adExe --set-password "${{ secrets.ANYDESK_PASSWORD }}"
@@ -32,7 +34,7 @@ jobs:
           # اجبار Always Allow
           reg add "HKLM\SOFTWARE\AnyDesk" /v Permission_Flags /t REG_DWORD /d 3 /f
 
-          # تشغيل الخدمة
+          # تشغيل الخدمة (لو متوفرة)
           Start-Service -Name "AnyDesk Service" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 3
 
@@ -94,3 +96,4 @@ jobs:
       - name: Keep alive for 6h
         shell: pwsh
         run: Start-Sleep -Seconds 21600
+
