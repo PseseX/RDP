@@ -1,4 +1,4 @@
-name: Windows RDP with RustDesk
+name: Windows RDP with AnyDesk
 
 on:
   workflow_dispatch:
@@ -15,74 +15,35 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
           Start-Service TermService
 
-      - name: Install RustDesk via Chocolatey
+      - name: Install AnyDesk (with unattended password)
         shell: pwsh
         run: |
-          choco feature enable -n=allowGlobalConfirmation
-          choco install rustdesk
-          # تأكد من تشغيل الخدمة
-          Start-Service -Name "RustDesk Service" -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 8
+          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "$env:TEMP\AnyDesk.exe"
+          Start-Process "$env:TEMP\AnyDesk.exe" -ArgumentList "--install `"$env:ProgramFiles(x86)\AnyDesk`" --start-with-win --silent" -Wait
+          # اضبط الباسورد للتوصيل بدون Accept
+          & "$env:ProgramFiles(x86)\AnyDesk\AnyDesk.exe" --set-password "Anydeskpw07@"
+          Start-Sleep -Seconds 5
 
-      - name: Ensure RustDesk generated ID/Password
+      - name: Get AnyDesk ID
+        id: anydesk
         shell: pwsh
         run: |
-          # لو ما اشتغلت الخدمة، شغّل التطبيق مرّة ليتولّد الـID/Pass
-          $exePaths = @(
-            "$env:ProgramFiles\RustDesk\rustdesk.exe",
-            "$env:ProgramFiles(x86)\RustDesk\rustdesk.exe"
-          )
-          $exe = $exePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $exe) { throw "RustDesk executable not found." }
-          # شغّل/أوقف لتوليد ملفات الإعداد
-          Start-Process $exe
-          Start-Sleep -Seconds 10
-          Get-Process rustdesk -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 3
-
-      - name: Read RustDesk ID and Password
-        id: rust
-        shell: pwsh
-        run: |
-          $idCandidates = @(
-            "$env:PROGRAMDATA\RustDesk\id",
-            "$env:PROGRAMDATA\RustDesk\config\id_ed25519.pub",
-            "$env:APPDATA\RustDesk\id",
-            "$env:APPDATA\RustDesk\config\id_ed25519.pub"
-          )
-          $pwdCandidates = @(
-            "$env:PROGRAMDATA\RustDesk\config\password.txt",
-            "$env:APPDATA\RustDesk\config\password.txt"
-          )
-
-          $id  = $null
-          foreach ($p in $idCandidates) {
-            if (Test-Path $p) { $id = (Get-Content $p -Raw).Trim(); break }
+          $idFile = "$env:ProgramData\AnyDesk\system.conf"
+          if (Test-Path $idFile) {
+            $id = (Get-Content $idFile | Select-String "ad.anynet.id=" | ForEach-Object { $_ -replace "ad.anynet.id=", "" }).Trim()
+            "ANYDESK_ID=$id" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "AnyDesk ID: $id"
+          } else {
+            Write-Warning "AnyDesk ID file not found."
           }
-          if (-not $id) { Write-Warning "RustDesk ID file not found."; }
 
-          $pwd = $null
-          foreach ($p in $pwdCandidates) {
-            if (Test-Path $p) { $pwd = (Get-Content $p -Raw).Trim(); break }
-          }
-          if (-not $pwd) { Write-Warning "RustDesk password file not found."; }
-
-          if ($id) { "RUSTDESK_ID=$id"   | Out-File -FilePath $env:GITHUB_ENV -Append }
-          if ($pwd){ "RUSTDESK_PASS=$pwd"| Out-File -FilePath $env:GITHUB_ENV -Append }
-
-          Write-Host "RustDesk ID: $id"
-          Write-Host "RustDesk Password: $pwd"
-
-      - name: Send info to Telegram
-        if: always()
+      - name: Send AnyDesk info to Telegram
         shell: pwsh
         run: |
-          $id  = $env:RUSTDESK_ID
-          $pwd = $env:RUSTDESK_PASS
-          $msg = "✅ Windows Cloud Ready (RustDesk)`n`nRustDesk ID: $id`nRustDesk Password: $pwd`n`nUser (RDP): runneradmin`nPass (RDP): P@ssw0rd123!`n`nNote: Session lasts 6h."
+          $msg = "✅ Windows Cloud Ready (AnyDesk)`n`nAnyDesk ID: $env:ANYDESK_ID`nPassword: Anydeskpw07@`n`nNote: Session lasts 6h."
           $uri = "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
-          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode "text=$msg"
+          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode text="$msg"
 
-      - name: Keep alive 6h
+      - name: Keep alive for 6h
         shell: pwsh
         run: Start-Sleep -Seconds 21600
