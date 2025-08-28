@@ -1,7 +1,6 @@
-name: Windows Cloud (AnyDesk + RDP)
+name: Windows RDP (6h with ngrok)
 
-on:
-  workflow_dispatch:
+on: [workflow_dispatch]
 
 jobs:
   build:
@@ -10,51 +9,11 @@ jobs:
       - name: Enable RDP
         shell: pwsh
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-Service -Name TermService -StartupType Automatic
-          Start-Service TermService
+          net user runneradmin P@ssw0rd123!
 
-      - name: Install AnyDesk via Chocolatey + set unattended
-        shell: pwsh
-        run: |
-          choco feature enable -n=allowGlobalConfirmation
-          choco install anydesk --ignore-checksums
-          
-          # البحث عن AnyDesk.exe
-          $exe = Get-ChildItem "C:\ProgramData\chocolatey\lib\" -Recurse -Filter "AnyDesk.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) { throw "AnyDesk.exe not found after install." }
-          $adExe = $exe.FullName
-          Write-Host "Found AnyDesk at $adExe"
-
-          # ضبط الباسورد للوصول بدون Accept
-          & $adExe --set-password "${{ secrets.ANYDESK_PASSWORD }}"
-          Start-Sleep -Seconds 3
-
-          # اجبار Always Allow
-          reg add "HKLM\SOFTWARE\AnyDesk" /v Permission_Flags /t REG_DWORD /d 3 /f
-
-          # تشغيل الخدمة (لو متوفرة)
-          Start-Service -Name "AnyDesk Service" -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 3
-
-      - name: Read AnyDesk ID
-        id: anydesk
-        shell: pwsh
-        run: |
-          $conf = "$env:ProgramData\AnyDesk\system.conf"
-          $id = $null
-          if (Test-Path $conf) {
-            $line = Get-Content $conf | Select-String "ad.anynet.id="
-            if ($line) { $id = ($line -replace "ad.anynet.id=", "").Trim() }
-          }
-          if (-not $id) { Write-Warning "AnyDesk ID not found in system.conf"; }
-          if ($id) {
-            "ANYDESK_ID=$id" | Out-File -FilePath $env:GITHUB_ENV -Append
-            Write-Host "AnyDesk ID: $id"
-          }
-
-      - name: Start ngrok TCP 3389 and capture RDP address
+      - name: Download & Setup ngrok
         shell: pwsh
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
@@ -64,9 +23,15 @@ jobs:
           Expand-Archive $zip -DestinationPath "$env:USERPROFILE\ngrok" -Force
           $ngrok = "$env:USERPROFILE\ngrok\ngrok.exe"
           & $ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
-          $log = "$env:TEMP\ngrok.log"
-          cmd /c start "" /B `"$ngrok`" tcp 3389 --log=stdout 1>`"$log`" 2>&1
+
+      - name: Start ngrok TCP 3389 and capture RDP address
+        shell: pwsh
+        run: |
+          $ngrok = "$env:USERPROFILE\ngrok\ngrok.exe"
+          $log   = "$env:TEMP\ngrok.log"
+          Start-Process -FilePath $ngrok -ArgumentList "tcp 3389" -NoNewWindow -RedirectStandardOutput $log
           Start-Sleep -Seconds 10
+
           $tries=0;$addr=$null
           while($tries -lt 30 -and -not $addr){
             if(Test-Path $log){
@@ -76,24 +41,21 @@ jobs:
             }
             if(-not $addr){ Start-Sleep -Seconds 2; $tries++ }
           }
+
           if(-not $addr){
             Write-Host "==== ngrok last log lines ===="
             if(Test-Path $log){ Get-Content $log -Tail 120 }
             throw "Could not find ngrok TCP address (check NGROK_AUTH_TOKEN / account)."
           }
-          "RDP_ADDR=$addr" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "RDP address: $addr"
+
+          Write-Host "==================================="
+          Write-Host "RDP Address: $addr"
           Write-Host "User: runneradmin"
           Write-Host "Pass: P@ssw0rd123!"
+          Write-Host "==================================="
 
-      - name: Send AnyDesk + RDP info to Telegram
-        shell: pwsh
-        run: |
-          $msg = "✅ Windows Cloud Ready (AnyDesk)`n`nAnyDesk ID: $env:ANYDESK_ID`nPassword: ${{ secrets.ANYDESK_PASSWORD }}`n`nRDP:`n$($env:RDP_ADDR)`nUser: runneradmin`nPass: P@ssw0rd123!`n`nNote: Session lasts 6h."
-          $uri = "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
-          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode text="$msg"
-
-      - name: Keep alive for 6h
+      - name: Keep alive ~6h
         shell: pwsh
         run: Start-Sleep -Seconds 21600
+
 
