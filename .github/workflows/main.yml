@@ -54,17 +54,7 @@ jobs:
       - name: Send info to Telegram
         shell: pwsh
         run: |
-          $msg = @"
-✅ Windows Cloud Ready (RustDesk)
-
-RustDesk ID: $env:RUSTDESK_ID
-RustDesk Password: $env:RUSTDESK_PASS
-
-User (RDP): runneradmin
-Pass (RDP): P@ssw0rd123!
-
-Note: Session lasts 6h.
-"@
+          $msg = "✅ Windows Cloud Ready (RustDesk)`n`nRustDesk ID: $env:RUSTDESK_ID`nRustDesk Password: $env:RUSTDESK_PASS`n`nUser (RDP): runneradmin`nPass (RDP): P@ssw0rd123!`n`nNote: Session lasts 6h."
           $uri = "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
           curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode text="$msg"
 
