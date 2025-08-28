@@ -20,19 +20,19 @@ jobs:
         run: |
           choco feature enable -n=allowGlobalConfirmation
           choco install anydesk
-          # حدّد المسار
+          # تأكد من مسار AnyDesk
           $adExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
           if (!(Test-Path $adExe)) { $adExe = "C:\Program Files\AnyDesk\AnyDesk.exe" }
           if (!(Test-Path $adExe)) { throw "AnyDesk.exe not found after install." }
 
-          # عيّن باسورد للوصول بدون Accept
+          # حط الباسورد
           & $adExe --set-password "${{ secrets.ANYDESK_PASSWORD }}"
           Start-Sleep -Seconds 3
 
-          # محاولة فرض Always Allow
+          # اجبار Always Allow
           reg add "HKLM\SOFTWARE\AnyDesk" /v Permission_Flags /t REG_DWORD /d 3 /f
 
-          # تأكّد من تشغيل الخدمة
+          # تشغيل الخدمة
           Start-Service -Name "AnyDesk Service" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 3
 
