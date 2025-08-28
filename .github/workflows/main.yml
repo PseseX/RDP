@@ -1,4 +1,4 @@
-name: Windows RDP with AnyDesk
+name: Windows RDP with RustDesk
 
 on: [workflow_dispatch]
 
@@ -9,28 +9,42 @@ jobs:
       - name: Enable RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+          net user runneradmin P@ssw0rd123!
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-Service -Name TermService -StartupType Automatic
-          Start-Service TermService
 
-      - name: Install AnyDesk
+      - name: Install RustDesk
+        shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "$env:TEMP\AnyDesk.exe"
-          Start-Process "$env:TEMP\AnyDesk.exe" -ArgumentList "--install `"$env:ProgramFiles(x86)\AnyDesk`" --start-with-win --silent" -Wait
-          & "$env:ProgramFiles(x86)\AnyDesk\AnyDesk.exe" --set-password ${{ secrets.ANYDESK_PASSWORD }}
+          Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk.exe" -OutFile "$env:TEMP\rustdesk.exe"
+          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "/VERYSILENT" -Wait
 
-      - name: Get AnyDesk ID
-        id: anydesk
+      - name: Get RustDesk ID
+        shell: powershell
         run: |
-          Start-Sleep -Seconds 10
-          $idFile = "$env:ProgramData\AnyDesk\system.conf"
-          $id = (Get-Content $idFile | Select-String "ad.anynet.id=" | ForEach-Object { $_ -replace "ad.anynet.id=", "" }).Trim()
-          echo "ID=$id" >> $env:GITHUB_ENV
+          Start-Sleep -Seconds 15
+          $config = "$env:APPDATA\RustDesk\config\id_ed25519.pub"
+          if (Test-Path $config) {
+            $id = Get-Content $config
+            echo "RUSTDESK_ID=$id" >> $env:GITHUB_ENV
+            echo "RustDesk ID: $id"
+          } else {
+            echo "RustDesk config not found yet"
+          }
 
-      - name: Send AnyDesk Info to Telegram
+      - name: Send Info to Telegram
         run: |
-          $msg = "✅ Windows Cloud Ready`n`nAnyDesk ID: $env:ID`nPassword: ${{ secrets.ANYDESK_PASSWORD }}`nNote: Session lasts 6h."
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} -d text="$msg"
+          $msg = @"
+✅ Windows Cloud Ready (RustDesk)
 
-      - name: Keep alive for 6h
+RustDesk ID: $env:RUSTDESK_ID
+User: runneradmin
+Pass: P@ssw0rd123!
+
+Note: Session lasts 6h.
+"@
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" `
+            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} `
+            --data-urlencode text="$msg"
+
+      - name: Keep alive 6h
         run: Start-Sleep -Seconds 21600
