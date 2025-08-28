@@ -1,4 +1,4 @@
-name: Windows RDP with AnyDesk
+name: Windows Cloud (AnyDesk + RDP)
 
 on:
   workflow_dispatch:
@@ -15,34 +15,74 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
           Start-Service TermService
 
-      - name: Install AnyDesk (with unattended password)
+      - name: Install AnyDesk (MSI) and set unattended password
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "$env:TEMP\AnyDesk.exe"
-          Start-Process "$env:TEMP\AnyDesk.exe" -ArgumentList "--install `"$env:ProgramFiles(x86)\AnyDesk`" --start-with-win --silent" -Wait
-          # اضبط الباسورد للتوصيل بدون Accept
-          & "$env:ProgramFiles(x86)\AnyDesk\AnyDesk.exe" --set-password "Anydeskpw07@"
-          Start-Sleep -Seconds 5
+          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.msi" -OutFile "$env:TEMP\AnyDesk.msi"
+          Start-Process "msiexec.exe" -ArgumentList "/i `"$env:TEMP\AnyDesk.msi`" /qn" -Wait
+          $adExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          if (!(Test-Path $adExe)) { $adExe = "C:\Program Files\AnyDesk\AnyDesk.exe" }
+          & $adExe --set-password "${{ secrets.ANYDESK_PASSWORD }}"
+          Start-Sleep -Seconds 3
+          # محاولة ضبط Always Allow عبر الريجستري (قد تختلف حسب الإصدار)
+          reg add "HKLM\SOFTWARE\AnyDesk" /v Permission_Flags /t REG_DWORD /d 3 /f
+          # تشغيل الخدمة إن وُجدت
+          Start-Service -Name "AnyDesk Service" -ErrorAction SilentlyContinue
 
-      - name: Get AnyDesk ID
+      - name: Read AnyDesk ID
         id: anydesk
         shell: pwsh
         run: |
-          $idFile = "$env:ProgramData\AnyDesk\system.conf"
-          if (Test-Path $idFile) {
-            $id = (Get-Content $idFile | Select-String "ad.anynet.id=" | ForEach-Object { $_ -replace "ad.anynet.id=", "" }).Trim()
+          $conf = "$env:ProgramData\AnyDesk\system.conf"
+          $id = $null
+          if (Test-Path $conf) {
+            $line = Get-Content $conf | Select-String "ad.anynet.id="
+            if ($line) { $id = ($line -replace "ad.anynet.id=", "").Trim() }
+          }
+          if (-not $id) { Write-Warning "AnyDesk ID not found in system.conf"; }
+          if ($id) {
             "ANYDESK_ID=$id" | Out-File -FilePath $env:GITHUB_ENV -Append
             Write-Host "AnyDesk ID: $id"
-          } else {
-            Write-Warning "AnyDesk ID file not found."
           }
 
-      - name: Send AnyDesk info to Telegram
+      - name: Start ngrok TCP 3389 and capture RDP address
+        shell: pwsh
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          $zip = "$env:TEMP\ngrok.zip"
+          Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath "$env:USERPROFILE\ngrok" -Force
+          $ngrok = "$env:USERPROFILE\ngrok\ngrok.exe"
+          & $ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
+          $log = "$env:TEMP\ngrok.log"
+          cmd /c start "" /B `"$ngrok`" tcp 3389 --log=stdout 1>`"$log`" 2>&1
+          Start-Sleep -Seconds 10
+          $tries=0;$addr=$null
+          while($tries -lt 30 -and -not $addr){
+            if(Test-Path $log){
+              $text = Get-Content $log -Raw
+              $m = [regex]::Match($text,"tcp://[a-z0-9\.\-]+:\d+")
+              if($m.Success){ $addr=$m.Value }
+            }
+            if(-not $addr){ Start-Sleep -Seconds 2; $tries++ }
+          }
+          if(-not $addr){
+            Write-Host "==== ngrok last log lines ===="
+            if(Test-Path $log){ Get-Content $log -Tail 120 }
+            throw "Could not find ngrok TCP address (check NGROK_AUTH_TOKEN / account)."
+          }
+          "RDP_ADDR=$addr" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "RDP address: $addr"
+          Write-Host "User: runneradmin"
+          Write-Host "Pass: P@ssw0rd123!"
+
+      - name: Send AnyDesk + RDP info to Telegram
         shell: pwsh
         run: |
-          $msg = "✅ Windows Cloud Ready (AnyDesk)`n`nAnyDesk ID: $env:ANYDESK_ID`nPassword: Anydeskpw07@`n`nNote: Session lasts 6h."
+          $msg = "✅ Windows Cloud Ready`n`nAnyDesk ID: $env:ANYDESK_ID`nPassword: ${{ secrets.ANYDESK_PASSWORD }}`n`nRDP:`n$($env:RDP_ADDR)`nUser: runneradmin`nPass: P@ssw0rd123!`n`nNote: Session lasts 6h."
           $uri = "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
-          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode text="$msg"
+          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode "text=$msg"
 
       - name: Keep alive for 6h
         shell: pwsh
