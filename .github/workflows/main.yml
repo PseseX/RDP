@@ -1,0 +1,36 @@
+name: Windows RDP with AnyDesk
+
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service TermService
+
+      - name: Install AnyDesk
+        run: |
+          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "$env:TEMP\AnyDesk.exe"
+          Start-Process "$env:TEMP\AnyDesk.exe" -ArgumentList "--install `"$env:ProgramFiles(x86)\AnyDesk`" --start-with-win --silent" -Wait
+          & "$env:ProgramFiles(x86)\AnyDesk\AnyDesk.exe" --set-password ${{ secrets.ANYDESK_PASSWORD }}
+
+      - name: Get AnyDesk ID
+        id: anydesk
+        run: |
+          Start-Sleep -Seconds 10
+          $idFile = "$env:ProgramData\AnyDesk\system.conf"
+          $id = (Get-Content $idFile | Select-String "ad.anynet.id=" | ForEach-Object { $_ -replace "ad.anynet.id=", "" }).Trim()
+          echo "ID=$id" >> $env:GITHUB_ENV
+
+      - name: Send AnyDesk Info to Telegram
+        run: |
+          $msg = "✅ Windows Cloud Ready`n`nAnyDesk ID: $env:ID`nPassword: ${{ secrets.ANYDESK_PASSWORD }}`nNote: Session lasts 6h."
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} -d text="$msg"
+
+      - name: Keep alive for 6h
+        run: Start-Sleep -Seconds 21600
