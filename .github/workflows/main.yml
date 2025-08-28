@@ -1,37 +1,49 @@
 name: Windows RDP with RustDesk
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Enable RDP
+        shell: pwsh
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
-          net user runneradmin P@ssw0rd123!
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service TermService
 
-      - name: Install RustDesk
-        shell: powershell
+      - name: Download RustDesk (portable)
+        shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk.exe" -OutFile "$env:TEMP\rustdesk.exe"
-          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "/VERYSILENT" -Wait
+          $url = "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\rustdesk.exe"
 
-      - name: Get RustDesk ID
-        shell: powershell
+      - name: First run to generate ID
+        shell: pwsh
         run: |
-          Start-Sleep -Seconds 15
-          $config = "$env:APPDATA\RustDesk\config\id_ed25519.pub"
-          if (Test-Path $config) {
-            $id = Get-Content $config
-            echo "RUSTDESK_ID=$id" >> $env:GITHUB_ENV
-            echo "RustDesk ID: $id"
+          Start-Process "$env:TEMP\rustdesk.exe"
+          Start-Sleep -Seconds 10
+          Stop-Process -Name "rustdesk" -Force -ErrorAction SilentlyContinue
+
+      - name: Read RustDesk ID
+        id: rust
+        shell: pwsh
+        run: |
+          $idFile = Join-Path $env:APPDATA "RustDesk\id"
+          if (!(Test-Path $idFile)) { $idFile = Join-Path $env:APPDATA "RustDesk\config\id_ed25519.pub" }
+          if (Test-Path $idFile) {
+            $id = (Get-Content $idFile -Raw).Trim()
+            "RUSTDESK_ID=$id" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "RustDesk ID: $id"
           } else {
-            echo "RustDesk config not found yet"
+            Write-Error "Could not find RustDesk ID file."
           }
 
-      - name: Send Info to Telegram
+      - name: Send info to Telegram
+        shell: pwsh
         run: |
           $msg = @"
 ✅ Windows Cloud Ready (RustDesk)
@@ -42,9 +54,10 @@ Pass: P@ssw0rd123!
 
 Note: Session lasts 6h.
 "@
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" `
-            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} `
-            --data-urlencode text="$msg"
+          $uri = "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
+          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode "text=$msg"
 
       - name: Keep alive 6h
+        shell: pwsh
         run: Start-Sleep -Seconds 21600
+
