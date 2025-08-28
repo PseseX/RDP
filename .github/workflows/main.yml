@@ -15,19 +15,26 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
           Start-Service TermService
 
-      - name: Install AnyDesk (MSI) and set unattended password
+      - name: Install AnyDesk via Chocolatey + set unattended
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.msi" -OutFile "$env:TEMP\AnyDesk.msi"
-          Start-Process "msiexec.exe" -ArgumentList "/i `"$env:TEMP\AnyDesk.msi`" /qn" -Wait
+          choco feature enable -n=allowGlobalConfirmation
+          choco install anydesk
+          # حدّد المسار
           $adExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
           if (!(Test-Path $adExe)) { $adExe = "C:\Program Files\AnyDesk\AnyDesk.exe" }
+          if (!(Test-Path $adExe)) { throw "AnyDesk.exe not found after install." }
+
+          # عيّن باسورد للوصول بدون Accept
           & $adExe --set-password "${{ secrets.ANYDESK_PASSWORD }}"
           Start-Sleep -Seconds 3
-          # محاولة ضبط Always Allow عبر الريجستري (قد تختلف حسب الإصدار)
+
+          # محاولة فرض Always Allow
           reg add "HKLM\SOFTWARE\AnyDesk" /v Permission_Flags /t REG_DWORD /d 3 /f
-          # تشغيل الخدمة إن وُجدت
+
+          # تأكّد من تشغيل الخدمة
           Start-Service -Name "AnyDesk Service" -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
 
       - name: Read AnyDesk ID
         id: anydesk
@@ -80,10 +87,11 @@ jobs:
       - name: Send AnyDesk + RDP info to Telegram
         shell: pwsh
         run: |
-          $msg = "✅ Windows Cloud Ready`n`nAnyDesk ID: $env:ANYDESK_ID`nPassword: ${{ secrets.ANYDESK_PASSWORD }}`n`nRDP:`n$($env:RDP_ADDR)`nUser: runneradmin`nPass: P@ssw0rd123!`n`nNote: Session lasts 6h."
+          $msg = "✅ Windows Cloud Ready (AnyDesk)`n`nAnyDesk ID: $env:ANYDESK_ID`nPassword: ${{ secrets.ANYDESK_PASSWORD }}`n`nRDP:`n$($env:RDP_ADDR)`nUser: runneradmin`nPass: P@ssw0rd123!`n`nNote: Session lasts 6h."
           $uri = "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
-          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode "text=$msg"
+          curl -s -X POST $uri -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode text="$msg"
 
       - name: Keep alive for 6h
         shell: pwsh
         run: Start-Sleep -Seconds 21600
+
